@@ -3,13 +3,21 @@
 (defparameter *show-hidden-p* nil)
 
 (defclass entry ()
-  ((display :initarg :display :initform nil)))
+  ((display
+    :initarg :display
+    :initform nil)))
 
 (defclass file (entry)
-  ((pathname :initarg :pathname :reader get-pathname)
-   (modified :reader get-modified)))
+  ((pathname
+    :initarg :pathname
+    :reader get-pathname)
+   (modified
+    :reader get-modified)))
 
-(defclass dir (file) ())
+(defclass dir (file)
+  ((initial-selection-entry
+    :initform nil
+    :reader initial-selection-entry)))
 
 (defmethod initialize-instance :after ((entry file) &key)
   (setf (slot-value entry 'modified) (file-write-date (get-pathname entry))))
@@ -65,4 +73,12 @@
 (defun parent (file &optional display)
   (let ((pathname (get-pathname file)))
     (when (cdr (pathname-directory pathname))
-      (file-entry (uiop:pathname-parent-directory-pathname pathname) display))))
+      (let* ((parent-pathname (uiop:pathname-parent-directory-pathname pathname))
+	     (parent-entry (file-entry parent-pathname display)))
+	(setf (slot-value parent-entry 'initial-selection-entry) file)
+	parent-entry))))
+
+(defun initial-selection-position (dir files)
+  (if-let (entry (initial-selection-entry dir))
+    (position (get-pathname entry) files :key #'get-pathname)
+    0))
