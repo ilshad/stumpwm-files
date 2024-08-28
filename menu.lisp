@@ -32,18 +32,17 @@
 (defmacro action (class &optional context)
   `(make-instance ',class :context ,context))
 
-(defun %actions (scope context)
+(defun actions (context &optional scope)
   (let ((classes (loop for (key value) on *scopes* by #'cddr
-		       when (if (keywordp scope)
-				(eq scope value)
-				(subtypep scope value))
-                       	 collect key)))
+		       when (if scope
+				(if (keywordp scope)
+				    (eq scope value)
+				    (subtypep scope value))
+				(subtypep (type-of context) value))
+                         collect key)))
     (flet ((sort-key (class) (or (getf *positions* class) 99)))
       (loop for class in (sort classes #'< :key #'sort-key)
 	    collect (make-instance class :context context)))))
-
-(defmacro actions (scope &optional context)
-  `(%actions ',scope ,context))
 
 (defaction show-hidden "Show hidden files" () (entry)
   (setf *show-hidden-p* t)
@@ -66,9 +65,10 @@
 (defaction delete-file-action "Delete" (file 40) (entry))
 
 (defaction dir-actions "ACTIONS" () (entry)
-  (let ((pathname (get-pathname (context entry))))
+  (let* ((context (context entry))
+	 (pathname (get-pathname context)))
     (nav (cons (make-file-entry pathname "<<<")
-	       (actions dir (context entry)))
+	       (actions context))
 	 (format nil "~a" pathname))))
 
 (defmethod navigate ((entry dir))
