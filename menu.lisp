@@ -1,5 +1,10 @@
 (in-package #:stumpwm-files)
 
+(defvar *scopes* nil)
+(defvar *positions* nil)
+
+(defgeneric navigate (object))
+
 (defmethod navigate ((object null)))
 
 (defun nav (entries prompt &optional (selected 0))
@@ -13,40 +18,57 @@
 (defclass action-entry (entry)
   ((context :initarg :context :reader context)))
 
+(defmacro defaction (class display (&optional scope position) (arg) &body body)
+  `(progn
+     (defclass ,class (action-entry)
+       ((display :initform ,display)))
+     ,(when scope
+	`(setf (getf *scopes* ',class) ',scope))
+     ,(when position
+	`(setf (getf *positions* ',class) ',position))
+     (defmethod navigate ((,arg ,class))
+       ,@body)))
+
 (defmacro action (class &optional context)
   `(make-instance ',class :context ,context))
 
-(defmacro defaction (class display (entry-var-name) &body body)
-  `(progn (defclass ,class (action-entry) ((display :initform ,display)))
-	  (defmethod navigate ((,entry-var-name ,class)) ,@body)))
+(defun %actions (scope context)
+  (let ((classes (loop for (key value) on *scopes* by #'cddr
+		       when (if (keywordp scope)
+				(eq scope value)
+				(subtypep scope value))
+                       	 collect key)))
+    (flet ((sort-key (class) (or (getf *positions* class) 99)))
+      (loop for class in (sort classes #'< :key #'sort-key)
+	    collect (make-instance class :context context)))))
 
-(defaction show-hidden "Show hidden files" (entry)
+(defmacro actions (scope &optional context)
+  `(%actions ',scope ,context))
+
+(defaction show-hidden "Show hidden files" () (entry)
   (setf *show-hidden-p* t)
   (navigate (context entry)))
 
-(defaction hide-hidden "Hide hidden files" (entry)
+(defaction hide-hidden "Hide hidden files" () (entry)
   (setf *show-hidden-p* nil)
   (navigate (context entry)))
 
-(defaction listing-settings "SETTINGS" (entry)
+(defaction listing-settings "SETTINGS" () (entry)
   (nav (list (make-file-entry (get-pathname (context entry)) "<<<")
 	     (if *show-hidden-p*
 		 (action hide-hidden (context entry))
 		 (action show-hidden (context entry))))
        "SETTINGS"))
 
-(defaction copy-file-action "Copy" (entry))
-(defaction move-file-action "Move" (entry))
-(defaction rename-file-action "Rename" (entry))
-(defaction delete-file-action "Delete" (entry))
+(defaction copy-file-action "Copy" (file 10) (entry))
+(defaction move-file-action "Move" (file 20) (entry))
+(defaction rename-file-action "Rename" (file 30) (entry))
+(defaction delete-file-action "Delete" (file 40) (entry))
 
-(defaction dir-actions "ACTIONS" (entry)
+(defaction dir-actions "ACTIONS" () (entry)
   (let ((pathname (get-pathname (context entry))))
-    (nav (list (make-file-entry pathname "<<<")
-	       (action copy-file-action (context entry))
-	       (action move-file-action (context entry))
-	       (action rename-file-action (context entry))
-	       (action delete-file-action (context entry)))
+    (nav (cons (make-file-entry pathname "<<<")
+	       (actions dir (context entry)))
 	 (format nil "~a" pathname))))
 
 (defmethod navigate ((entry dir))
