@@ -4,6 +4,8 @@
 (defvar *positions* nil)
 (defvar *operation* nil)
 
+(defparameter *debug-value* nil)
+
 (defgeneric navigate (object))
 
 (defmethod navigate ((object null)))
@@ -42,10 +44,10 @@
 	 ,@body
 	 (setf *operation* nil)))))
 
-(defmacro action (class &optional context)
-  `(make-instance ',class :context ,context))
+(defun make-action (class context)
+  (make-instance class :context context))
 
-(defun actions (context &optional scope)
+(defun make-actions (context &optional scope)
   (let ((classes (loop for (key value) on *scopes* by #'cddr
 		       when (if scope
 				(if (keywordp scope)
@@ -55,7 +57,7 @@
                          collect key)))
     (flet ((sort-key (class) (or (getf *positions* class) 99)))
       (loop for class in (sort classes #'< :key #'sort-key)
-	    collect (make-instance class :context context)))))
+            collect (make-action class context)))))
 
 (defun clean-actions ()
   (setf *scopes* nil)
@@ -71,66 +73,132 @@
   (navigate (context action)))
 
 (defaction settings "SETTINGS" () (action)
-  (nav (list (make-node (get-pathname (context action)) "<<<")
-	     (if *show-hidden-p*
-		 (action hide-hidden (context action))
-		 (action show-hidden (context action))))
-       "SETTINGS"))
+  (let ((dir (context action)))
+    (nav (list (make-node (get-pathname dir) "<<<")
+	       (make-action (if *show-hidden-p* 'hide-hidden 'show-hidden) dir))
+	 "SETTINGS")))
 
-(defoperation copy-file-action "Copy file" (file 10) (action &key dir)
-  (setf *debug-value* (list :copy action dir)))
+(defun cli-from-to (command from to)
+  (uiop:run-program
+   (append command
+	   (list (namestring (get-pathname from))
+		 (namestring (get-pathname to))))))
 
-(defoperation move-file-action "Move file" (file 20) (action &key dir)
-  (setf *debug-value* (list :copy action dir)))
+(defoperation copy-file-action "Copy" (file 10) (action &key dir)
+  (cli-from-to '("cp") (context action) dir))
 
-(defaction copy-dir-action "Copy directory" (dir 10) (action))
-(defaction move-dir-action "Move directory" (dir 20) (action))
+(defoperation move-file-action "Move" (file 20) (action &key dir)
+  (cli-from-to '("mv") (context action) dir))
 
-(defaction rename-file-action "Rename file" (file 30) (action))
-(defaction delete-file-action "Delete file" (file 40) (action))
-(defaction rename-dir-action "Rename directory" (dir 30) (action))
-(defaction delete-dir-action "Delete directory" (dir 40) (action))
-(defaction create-dir-action "Create nested directory" (dir 50) (action))
+(defaction rename-file-action "Rename" (file 30) (action)
+  (let* ((file (context action))
+	 (old-pathname (get-pathname file))
+	 (dir-pathname (uiop:pathname-directory-pathname old-pathname)))
+    (when-let (new-name (stumpwm:read-one-line
+			 (stumpwm:current-screen)
+			 (format nil "Rename ~a to: " (display file))))
+      (let ((new-pathname (merge-pathnames new-name dir-pathname)))
+	(uiop:run-program
+	 (list "mv" (namestring old-pathname) (namestring new-pathname)))))
+    (navigate (parent file))))
+
+(defaction delete-file-action "Delete" (file 40) (action)
+  (let* ((file (context action))
+	 (pathname (get-pathname file)))
+    (when (stumpwm::yes-or-no-p (format nil "Delete file '~a'? " pathname))
+      (uiop:run-program (list "rm" (namestring pathname))))
+    (navigate (parent file))))
+
+(defoperation copy-dir-action "Copy directory" (dir 10) (action &key dir)
+  (cli-from-to '("cp" "-r") (context action) dir))
+
+(defoperation move-dir-action "Move directory" (dir 20) (action &key dir)
+  (cli-from-to '("mv") (context action) dir))
+
+(defaction rename-dir-action "Rename directory" (dir 30) (action)
+  (let* ((dir (context action))
+	 (old-pathname (get-pathname dir))
+	 (old-name (lastcar (pathname-directory old-pathname))))
+    (when-let (new-name (stumpwm:read-one-line
+			 (stumpwm:current-screen)
+			 (format nil "Rename directory '~a' to: " old-name)))
+      (let ((new-pathname (merge-pathnames new-name (get-pathname (parent dir)))))
+	(uiop:run-program
+	 (list "mv" (namestring old-pathname) (namestring new-pathname)))))
+    (navigate (parent dir))))
+
+(defun forbidden-delete-directory (pathname)
+  (or (eq pathname (user-homedir-pathname))
+      (>= 3 (length (pathname-directory pathname)))))
+
+(defun validate-delete-1 (pathname)
+  (stumpwm::yes-or-no-p
+   (format nil "Directory '~a' is not empty.~%DELETE RECURSIVELY?~%" pathname)))
+
+(defun validate-delete-2 (pathname)
+  (or (forbidden-delete-directory pathname)
+      (stumpwm::yes-or-no-p
+       (format nil "~a~%CONFIRM RECURSIVE DELETION AGAIN.~%" pathname))))
+
+(defaction delete-dir-action "Delete directory" (dir 40) (action)
+  (let* ((dir (context action))
+	 (pathname (get-pathname dir)))
+    (when (stumpwm::yes-or-no-p (format nil "Delete directory '~a'?~%" pathname))
+      (if (emptyp (list-directory-pathnames pathname))
+	  (uiop:delete-empty-directory pathname)
+          (when (validate-delete-1 pathname)
+	    (uiop:delete-directory-tree pathname :validate #'validate-delete-2))))
+    (navigate (parent dir))))
+
+(defaction create-dir-action "Create nested directory" (dir 50) (action)
+  (let* ((dir (context action))
+	 (pathname (get-pathname dir)))
+    (when-let (name (stumpwm:read-one-line
+		     (stumpwm:current-screen)
+		     (format nil "~a~%Create directory: " pathname)))
+      (uiop:run-program (list "mkdir" (namestring (merge-pathnames name pathname))))
+      (navigate dir))))
 
 (defaction dir-actions "ACTIONS" () (action)
   (let* ((dir (context action))
 	 (pathname (get-pathname dir)))
     (nav (cons (make-node pathname "<<<")
-	       (actions dir))
-	 (princ-to-string pathname))))
-
-(defparameter *debug-value* nil)
-
-(defaction paste "PASTE" () (action)
-  (operation *operation* :dir (context action))
-  (navigate (context action)))
+	       (make-actions dir))
+	 (namestring pathname))))
 
 (defaction cancel "CANCEL" () (action)
   (setf *operation* nil)
   (navigate (context action)))
 
+(defaction paste nil () (action)
+  (operation *operation* :dir (context action))
+  (navigate (context action)))
+
+(defmethod display ((action paste))
+  (format nil "PASTE THIS: ~a" (display (context *operation*))))
+
 (defun dir-menu (dir)
   (if *operation*
-      (list (action cancel dir)
-	    (action paste dir)
-	    (parent dir "../"))
-      (list (action settings dir)
-	    (action dir-actions dir)
-	    (parent dir "../"))))
+      (list (make-action 'cancel dir)
+	    (make-action 'paste dir)
+            (parent dir "../"))
+      (list (make-action 'settings dir)
+	    (make-action 'dir-actions dir)
+            (parent dir "../"))))
 
 (defmethod navigate ((dir dir))
   (let* ((pathname (get-pathname dir))
          (nodes (sorted-nodes pathname))
 	 (menu (remove nil (dir-menu dir))))
     (nav (append menu nodes)
-	 (princ-to-string pathname)
+	 (namestring pathname)
 	 (+ (or (initial-selection-position dir nodes) -1)
 	    (length menu)))))
 
 (defmethod navigate ((file file))
   (nav (cons (parent file "<<<")
-	     (actions file))
-       (princ-to-string (get-pathname file))))
+	     (make-actions file))
+       (namestring (get-pathname file))))
 
 (defun menu ()
   (let ((stumpwm::*menu-maximum-height* 30))
