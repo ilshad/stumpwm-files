@@ -68,13 +68,22 @@
 (defun sorted-nodes (pathname)
   (sort-nodes (make-nodes (list-directory-pathnames pathname))))
 
-(defun parent (node &optional display)
-  (let ((pathname (get-pathname node)))
+(defgeneric parent (node &optional display))
+
+(defmethod parent ((dir dir) &optional display)
+  (let ((pathname (get-pathname dir)))
     (when (cdr (pathname-directory pathname))
       (let* ((parent-pathname (uiop:pathname-parent-directory-pathname pathname))
 	     (parent-node (make-node parent-pathname display)))
-	(setf (initial-selection-node parent-node) node)
+	(setf (initial-selection-node parent-node) dir)
 	parent-node))))
+
+(defmethod parent ((file file) &optional display)
+  (let* ((pathname (get-pathname file))
+	 (dir-pathname (uiop:pathname-directory-pathname pathname))
+	 (dir (make-node dir-pathname display)))
+    (setf (initial-selection-node dir) file)
+    dir))
 
 (defun initial-selection-position (dir nodes)
   (when-let (node (initial-selection-node dir))
