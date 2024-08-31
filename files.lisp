@@ -1,6 +1,7 @@
 (in-package #:stumpwm-files)
 
 (defparameter *show-hidden-p* nil)
+(defparameter *hidden-types* '("fasl"))
 
 (defclass entry ()
   ((display :initarg :display :initform nil :reader display)))
@@ -33,7 +34,9 @@
 
 (defmethod hidden-p ((node node))
   (or (slot-value node 'hidden-p)
-      (equal (uiop:first-char (display node)) #\.)))
+      (equal (uiop:first-char (display node)) #\.)
+      (when-let (type (pathname-type (get-pathname node)))
+	(member type *hidden-types* :test #'string-equal))))
 
 (defmethod dir-p ((node file)) nil)
 (defmethod dir-p ((node dir)) t)

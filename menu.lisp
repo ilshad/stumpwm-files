@@ -94,13 +94,17 @@
 	   (list (namestring (get-pathname from))
 		 (namestring (get-pathname to))))))
 
-(defoperation copy-file-action "Copy" (file 10) (action &key dir)
+(defaction xdg-open-file-action "Open" (file 10) (action)
+  (uiop:launch-program
+   (list "xdg-open" (namestring (get-pathname (context action))))))
+
+(defoperation copy-file-action "Copy" (file 50) (action &key dir)
   (cli-from-to '("cp") (context action) dir))
 
-(defoperation move-file-action "Move" (file 20) (action &key dir)
+(defoperation move-file-action "Move" (file 60) (action &key dir)
   (cli-from-to '("mv") (context action) dir))
 
-(defaction rename-file-action "Rename" (file 30) (action)
+(defaction rename-file-action "Rename" (file 70) (action)
   (let* ((file (context action))
 	 (old-pathname (get-pathname file))
 	 (dir-pathname (uiop:pathname-directory-pathname old-pathname)))
@@ -117,7 +121,7 @@
 				      (namestring new-pathname)))
 	      (navigate (parent file))))))))
 
-(defaction delete-file-action "Delete" (file 40) (action)
+(defaction delete-file-action "Delete" (file 80) (action)
   (let* ((file (context action))
 	 (pathname (get-pathname file)))
     (when (stumpwm::yes-or-no-p (format nil "Delete file '~a'? " pathname))
@@ -209,9 +213,9 @@
             (parent dir "../"))))
 
 (defmethod navigate ((dir dir))
-  (let* ((pathname (get-pathname dir))
-         (nodes (sorted-nodes pathname))
-	 (menu (remove nil (dir-menu dir))))
+  (let* ((menu (remove nil (dir-menu dir)))
+	 (pathname (get-pathname dir))
+         (nodes (sorted-nodes pathname)))
     (nav (append menu nodes)
 	 (namestring pathname)
 	 (+ (or (initial-selection-position dir nodes) -1)
@@ -220,7 +224,8 @@
 (defmethod navigate ((file file))
   (nav (cons (parent file "<<<")
 	     (make-actions file))
-       (namestring (get-pathname file))))
+       (namestring (get-pathname file))
+       1))
 
 (defun menu ()
   (let ((stumpwm::*menu-maximum-height* 30))
