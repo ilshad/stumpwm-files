@@ -6,11 +6,12 @@
 
 (defparameter *debug-value* nil)
 
-(defgeneric navigate (object))
+(defgeneric navigate (entry))
+(defgeneric operation (action &key &allow-other-keys))
+(defgeneric enabled-p (action))
 
 (defmethod navigate ((object null)))
-
-(defgeneric operation (action &key &allow-other-keys))
+(defmethod enabled-p (action) t)
 
 (defun nav (entries prompt &optional (selected 0))
   (navigate
@@ -57,7 +58,9 @@
                          collect key)))
     (flet ((sort-key (class) (or (getf *positions* class) 99)))
       (loop for class in (sort classes #'< :key #'sort-key)
-            collect (make-action class context)))))
+	    for action = (make-action class context)
+	    when (enabled-p action)
+            collect action))))
 
 (defun clean-actions ()
   (setf *scopes* nil)
@@ -77,6 +80,13 @@
     (nav (list (make-node (get-pathname dir) "<<<")
 	       (make-action (if *show-hidden-p* 'hide-hidden 'show-hidden) dir))
 	 "SETTINGS")))
+
+(defun forbidden-pathname-p (pathname)
+  (or (eq pathname (user-homedir-pathname))
+      (>= 3 (length (pathname-directory pathname)))))
+
+(defun enabled-action-p (action)
+  (not (forbidden-pathname-p (get-pathname (context action)))))
 
 (defun cli-from-to (command from to)
   (uiop:run-program
@@ -98,9 +108,14 @@
 			 (stumpwm:current-screen)
 			 (format nil "Rename ~a to: " (display file))))
       (let ((new-pathname (merge-pathnames new-name dir-pathname)))
-	(uiop:run-program
-	 (list "mv" (namestring old-pathname) (namestring new-pathname)))))
-    (navigate (parent file))))
+	(if (forbidden-pathname-p new-pathname)
+	    (stumpwm::message-no-timeout
+	     (format nil "Forbidden pathname:~%~a" new-pathname))
+	    (progn
+	      (uiop:run-program (list "mv"
+				      (namestring old-pathname)
+				      (namestring new-pathname)))
+	      (navigate (parent file))))))))
 
 (defaction delete-file-action "Delete" (file 40) (action)
   (let* ((file (context action))
@@ -122,21 +137,24 @@
     (when-let (new-name (stumpwm:read-one-line
 			 (stumpwm:current-screen)
 			 (format nil "Rename directory '~a' to: " old-name)))
-      (let ((new-pathname (merge-pathnames new-name (get-pathname (parent dir)))))
-	(uiop:run-program
-	 (list "mv" (namestring old-pathname) (namestring new-pathname)))))
-    (navigate (parent dir))))
-
-(defun forbidden-delete-directory (pathname)
-  (or (eq pathname (user-homedir-pathname))
-      (>= 3 (length (pathname-directory pathname)))))
+      (let ((new-pathname (uiop:ensure-directory-pathname
+			   (merge-pathnames new-name
+					    (get-pathname (parent dir))))))
+	(if (forbidden-pathname-p new-pathname)
+	    (stumpwm::message-no-timeout
+	     (format nil "Forbidden pathname:~%~a" new-pathname))
+            (progn
+	      (uiop:run-program (list "mv"
+				      (namestring old-pathname)
+				      (namestring new-pathname)))
+	      (navigate (parent dir))))))))
 
 (defun validate-delete-1 (pathname)
   (stumpwm::yes-or-no-p
    (format nil "Directory '~a' is not empty.~%DELETE RECURSIVELY?~%" pathname)))
 
 (defun validate-delete-2 (pathname)
-  (or (forbidden-delete-directory pathname)
+  (or (forbidden-pathname-p pathname)
       (stumpwm::yes-or-no-p
        (format nil "~a~%CONFIRM RECURSIVE DELETION AGAIN.~%" pathname))))
 
@@ -150,7 +168,7 @@
 	    (uiop:delete-directory-tree pathname :validate #'validate-delete-2))))
     (navigate (parent dir))))
 
-(defaction create-dir-action "Create nested directory" (dir 50) (action)
+(defaction create-dir-action "Create directory" (dir 50) (action)
   (let* ((dir (context action))
 	 (pathname (get-pathname dir)))
     (when-let (name (stumpwm:read-one-line
@@ -173,6 +191,10 @@
 (defaction paste nil () (action)
   (operation *operation* :dir (context action))
   (navigate (context action)))
+
+(defmethod enabled-p ((action rename-dir-action)) (enabled-action-p action))
+(defmethod enabled-p ((action move-dir-action)) (enabled-action-p action))
+(defmethod enabled-p ((action delete-dir-action)) (enabled-action-p action))
 
 (defmethod display ((action paste))
   (format nil "PASTE THIS: ~a" (display (context *operation*))))
