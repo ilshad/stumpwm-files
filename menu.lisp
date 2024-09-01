@@ -98,13 +98,13 @@
   (uiop:launch-program
    (list "xdg-open" (namestring (get-pathname (context action))))))
 
-(defoperation copy-file-action "Copy" (file 50) (action &key dir)
+(defoperation copy-file-action "Copy" (file 20) (action &key dir)
   (cli-from-to '("cp") (context action) dir))
 
-(defoperation move-file-action "Move" (file 60) (action &key dir)
+(defoperation move-file-action "Move" (file 30) (action &key dir)
   (cli-from-to '("mv") (context action) dir))
 
-(defaction rename-file-action "Rename" (file 70) (action)
+(defaction rename-file-action "Rename" (file 40) (action)
   (let* ((file (context action))
 	 (old-pathname (get-pathname file))
 	 (dir-pathname (uiop:pathname-directory-pathname old-pathname)))
@@ -121,20 +121,27 @@
 				      (namestring new-pathname)))
 	      (navigate (parent file))))))))
 
-(defaction delete-file-action "Delete" (file 80) (action)
+(defaction delete-file-action "Delete" (file 50) (action)
   (let* ((file (context action))
 	 (pathname (get-pathname file)))
     (when (stumpwm::yes-or-no-p (format nil "Delete file '~a'? " pathname))
       (uiop:run-program (list "rm" (namestring pathname))))
     (navigate (parent file))))
 
-(defoperation copy-dir-action "Copy directory" (dir 10) (action &key dir)
+(defaction xdg-open-dir-action "Open" (dir 10) (action)
+  (uiop:launch-program
+   (list "xdg-open" (namestring (get-pathname (context action))))))
+
+(defoperation copy-dir-action "Copy" (dir 20) (action &key dir)
   (cli-from-to '("cp" "-r") (context action) dir))
 
-(defoperation move-dir-action "Move directory" (dir 20) (action &key dir)
+(defoperation move-dir-action "Move" (dir 30) (action &key dir)
   (cli-from-to '("mv") (context action) dir))
 
-(defaction rename-dir-action "Rename directory" (dir 30) (action)
+(defmethod enabled-p ((action move-dir-action))
+  (enabled-action-p action))
+
+(defaction rename-dir-action "Rename" (dir 40) (action)
   (let* ((dir (context action))
 	 (old-pathname (get-pathname dir))
 	 (old-name (lastcar (pathname-directory old-pathname))))
@@ -153,6 +160,9 @@
 				      (namestring new-pathname)))
 	      (navigate (parent dir))))))))
 
+(defmethod enabled-p ((action rename-dir-action))
+  (enabled-action-p action))
+
 (defun validate-delete-1 (pathname)
   (stumpwm::yes-or-no-p
    (format nil "Directory '~a' is not empty.~%DELETE RECURSIVELY?~%" pathname)))
@@ -162,7 +172,7 @@
       (stumpwm::yes-or-no-p
        (format nil "~a~%CONFIRM RECURSIVE DELETION AGAIN.~%" pathname))))
 
-(defaction delete-dir-action "Delete directory" (dir 40) (action)
+(defaction delete-dir-action "Delete" (dir 40) (action)
   (let* ((dir (context action))
 	 (pathname (get-pathname dir)))
     (when (stumpwm::yes-or-no-p (format nil "Delete directory '~a'?~%" pathname))
@@ -172,7 +182,10 @@
 	    (uiop:delete-directory-tree pathname :validate #'validate-delete-2))))
     (navigate (parent dir))))
 
-(defaction create-dir-action "Create directory" (dir 50) (action)
+(defmethod enabled-p ((action delete-dir-action))
+  (enabled-action-p action))
+
+(defaction create-dir-action "Create" (dir 50) (action)
   (let* ((dir (context action))
 	 (pathname (get-pathname dir)))
     (when-let (name (stumpwm:read-one-line
@@ -196,12 +209,8 @@
   (operation *operation* :dir (context action))
   (navigate (context action)))
 
-(defmethod enabled-p ((action rename-dir-action)) (enabled-action-p action))
-(defmethod enabled-p ((action move-dir-action)) (enabled-action-p action))
-(defmethod enabled-p ((action delete-dir-action)) (enabled-action-p action))
-
 (defmethod display ((action paste))
-  (format nil "PASTE THIS: ~a" (display (context *operation*))))
+  (format nil "PASTE: ~a" (display (context *operation*))))
 
 (defun dir-menu (dir)
   (if *operation*
