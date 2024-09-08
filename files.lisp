@@ -91,3 +91,21 @@
 (defun initial-selection-position (dir nodes)
   (when-let (node (initial-selection-node dir))
     (position (get-pathname node) nodes :key #'get-pathname)))
+
+(defun %from-to (command from to)
+  (uiop:run-program
+   (append command (list (namestring (get-pathname from))
+			 (namestring (get-pathname to))))))
+
+(defgeneric copy-node (node destination))
+
+(defmethod copy-node ((node file) (destination dir))
+  (%from-to '("cp") node destination))
+
+(defmethod copy-node ((node dir) (destination dir))
+  (%from-to '("cp" "-r") node destination))
+
+(defgeneric move-node (node destination))
+
+(defmethod move-node ((node node) (destination dir))
+  (%from-to '("mv") node destination))
