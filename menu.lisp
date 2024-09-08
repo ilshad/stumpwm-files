@@ -4,14 +4,14 @@
 
 (defvar *scopes* nil)
 (defvar *positions* nil)
-(defvar *operation* nil)
+(defvar *continue* nil)
 
 (defparameter *debug-value* nil)
 
 (defgeneric navigate (entry))
-(defgeneric operation (action &key &allow-other-keys))
-(defgeneric display-operation (action))
 (defgeneric enabled-p (action))
+(defgeneric display-continue (action))
+(defgeneric perform-continue (action &key &allow-other-keys))
 
 (defmethod navigate ((object null)))
 (defmethod enabled-p (action) t)
@@ -65,15 +65,12 @@
      (defmethod navigate ((,arg ,class))
        ,@body)))
 
-(defmacro defoperation (class display (scope position) (arg &rest args) &body body)
-  (let ((op-args (cdr args)))
-    `(progn
-       (defaction ,class ,display (,scope ,position) (action)
-	 (setf *operation* action)
-	 (navigate (parent (context action))))
-       (defmethod operation ((,arg ,class) &key ,@op-args)
-	 ,@body
-	 (setf *operation* nil)))))
+(defun set-continue (action &optional (parent-p t))
+  (setf *continue* action)
+  (navigate (if parent-p (parent (context action)) (context action))))
+
+(defun del-continue ()
+  (setf *continue* nil))
 
 (defun make-action (class context)
   (make-instance class :context context))
@@ -95,7 +92,7 @@
 (defun clean-actions ()
   (setf *scopes* nil)
   (setf *positions* nil)
-  (setf *operation* nil)
+  (setf *continue* nil)
   (setf *debug-value* nil))
 
 (defun navigate-action (class pathname)
@@ -128,17 +125,25 @@
   (uiop:launch-program
    (list "xdg-open" (namestring (get-pathname (context action))))))
 
-(defoperation copy-file-action "Copy" (file 20) (action &key dir)
-  (copy-node (context action) dir))
+(defaction copy-file-action "Copy" (file 20) (action)
+  (set-continue action))
 
-(defmethod display-operation ((action copy-file-action))
+(defmethod display-continue ((action copy-file-action))
   (format nil "PASTE: ~a" (display (context action))))
 
-(defoperation move-file-action "Move" (file 30) (action &key dir)
-  (move-node (context action) dir))
+(defmethod perform-continue ((action copy-file-action) &key dir)
+  (copy-node (context action) dir)
+  (del-continue))
 
-(defmethod display-operation ((action move-file-action))
+(defaction move-file-action "Move" (file 30) (action)
+  (set-continue action))
+
+(defmethod display-continue ((action move-file-action))
   (format nil "PASTE: ~a" (display (context action))))
+
+(defmethod perform-continue ((action move-file-action) &key dir)
+  (move-node (context action) dir)
+  (del-continue))
 
 (defaction rename-file-action "Rename" (file 40) (action)
   (let* ((file (context action))
@@ -165,17 +170,25 @@
   (uiop:launch-program
    (list "xdg-open" (namestring (get-pathname (context action))))))
 
-(defoperation copy-dir-action "Copy" (dir 20) (action &key dir)
-  (copy-node (context action) dir))
+(defaction copy-dir-action "Copy" (dir 20) (action)
+  (set-continue action))
 
-(defmethod display-operation ((action copy-dir-action))
+(defmethod display-continue ((action copy-dir-action))
   (format nil "PASTE: ~a" (display (context action))))
 
-(defoperation move-dir-action "Move" (dir 30) (action &key dir)
-  (move-node (context action) dir))
+(defmethod perform-continue ((action copy-dir-action) &key dir)
+  (copy-node (context action) dir)
+  (del-continue))
 
-(defmethod display-operation ((action copy-dir-action))
+(defaction move-dir-action "Move" (dir 30) (action)
+  (set-continue action))
+
+(defmethod display-continue ((action move-dir-action))
   (format nil "PASTE: ~a" (display (context action))))
+
+(defmethod perform-continue ((action move-dir-action) &key dir)
+  (move-node (context action) dir)
+  (del-continue))
 
 (defmethod enabled-p ((action move-dir-action))
   (enabled-action-p action))
@@ -213,15 +226,26 @@
 		     (format nil "~d selected" (length nodes)))
        dir))))
 
-(defoperation copy-selected-nodes "Copy" (:nodes-selection 10) (action &key dir)
-  (dolist (node (selected (context action)))
-    (copy-node node dir)))
+(defaction copy-selected-nodes "Copy" (:nodes-selection 10) (action)
+  (set-continue action nil))
 
-(defmethod display-operation ((action copy-selected-nodes))
+(defmethod display-continue ((action copy-selected-nodes))
   (format nil "PASTE (~d selected)" (length (selected (context action)))))
 
-(defoperation move-selected-nodes "Move" (:nodes-selection 20) (action &key dir)
-  (setf *debug-value* (list action dir)))
+(defmethod perform-continue ((action copy-selected-nodes) &key dir)
+  (dolist (node (selected (context action)))
+    (copy-node node dir))
+  (del-continue))
+
+(defaction move-selected-nodes "Move" (:nodes-selection 20) (action)
+  (set-continue action nil))
+
+(defmethod display-continue ((action move-selected-nodes))
+  (format nil "PASTE (~d selected)" (length (selected (context action)))))
+
+(defmethod perform-continue ((action move-selected-nodes) &key dir)
+  (setf *debug-value* (list action dir))
+  (del-continue))
 
 (defaction delete-selected-nodes "Delete" (:nodes-selection 30) (action)
   (setf *debug-value* action))
@@ -258,22 +282,22 @@
 			 (make-actions dir))
 		   (namestring pathname)))))
 
-(defaction cancel-operation "CANCEL" () (action)
-  (setf *operation* nil)
+(defaction cancel-continue "CANCEL" () (action)
+  (del-continue)
   (navigate (context action)))
 
-(defaction finish-operation nil () (action)
+(defaction finish-continue nil () (action)
   (let ((dir (context action)))
-    (operation *operation* :dir dir)
+    (perform-continue *continue* :dir dir)
     (navigate dir)))
 
-(defmethod display ((action finish-operation))
-  (display-operation *operation*))
+(defmethod display ((action finish-continue))
+  (display-continue *continue*))
 
 (defun dir-menu (dir)
-  (if *operation*
-      (list (make-action 'cancel-operation dir)
-	    (make-action 'finish-operation dir)
+  (if *continue*
+      (list (make-action 'cancel-continue dir)
+	    (make-action 'finish-continue dir)
             (parent dir "../"))
       (list (make-action 'settings dir)
 	    (make-action 'dir-actions dir)
