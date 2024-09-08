@@ -10,13 +10,13 @@
 
 (defgeneric navigate (entry))
 (defgeneric enabled-p (action))
-(defgeneric display-continue (action))
-(defgeneric perform-continue (action &key &allow-other-keys))
+(defgeneric display-continue (action node))
+(defgeneric perform-continue (action node))
 
 (defmethod navigate ((object null)))
 (defmethod enabled-p (action) t)
 
-(defun input-line (prompt-fmt-string prompt-fmt-args)
+(defun input-line (prompt-fmt-string &rest prompt-fmt-args)
   (stumpwm:read-one-line
    (stumpwm:current-screen)
    (apply #'format nil prompt-fmt-string prompt-fmt-args)))
@@ -65,13 +65,6 @@
      (defmethod navigate ((,arg ,class))
        ,@body)))
 
-(defun set-continue (action &optional (parent-p t))
-  (setf *continue* action)
-  (navigate (if parent-p (parent (context action)) (context action))))
-
-(defun del-continue ()
-  (setf *continue* nil))
-
 (defun make-action (class context)
   (make-instance class :context context))
 
@@ -95,8 +88,12 @@
   (setf *continue* nil)
   (setf *debug-value* nil))
 
-(defun navigate-action (class pathname)
-  (navigate (make-action class (make-node pathname))))
+(defun set-continue (action &optional (parent-p t))
+  (setf *continue* action)
+  (navigate (if parent-p (parent (context action)) (context action))))
+
+(defun del-continue ()
+  (setf *continue* nil))
 
 (defaction show-hidden "Show hidden files" () (action)
   (setf *show-hidden-p* t)
@@ -123,25 +120,26 @@
 
 (defaction xdg-open-file-action "Open" (file 10) (action)
   (uiop:launch-program
-   (list "xdg-open" (namestring (get-pathname (context action))))))
+   (list "xdg-open"
+	 (namestring (get-pathname (context action))))))
 
 (defaction copy-file-action "Copy" (file 20) (action)
   (set-continue action))
 
-(defmethod display-continue ((action copy-file-action))
+(defmethod display-continue ((action copy-file-action) dir)
   (format nil "PASTE: ~a" (display (context action))))
 
-(defmethod perform-continue ((action copy-file-action) &key dir)
+(defmethod perform-continue ((action copy-file-action) dir)
   (copy-node (context action) dir)
   (del-continue))
 
 (defaction move-file-action "Move" (file 30) (action)
   (set-continue action))
 
-(defmethod display-continue ((action move-file-action))
+(defmethod display-continue ((action move-file-action) dir)
   (format nil "PASTE: ~a" (display (context action))))
 
-(defmethod perform-continue ((action move-file-action) &key dir)
+(defmethod perform-continue ((action move-file-action) dir)
   (move-node (context action) dir)
   (del-continue))
 
@@ -154,9 +152,10 @@
 	(if (forbidden-pathname-p new-pathname)
 	    (stumpwm::message-no-timeout "Forbidden pathname:~%~a" new-pathname)
 	    (progn
-	      (uiop:run-program (list "mv"
-				      (namestring old-pathname)
-				      (namestring new-pathname)))
+              (uiop:run-program
+	       (list "mv"
+		     (namestring old-pathname)
+		     (namestring new-pathname)))
 	      (navigate (parent file))))))))
 
 (defaction delete-file-action "Delete" (file 50) (action)
@@ -168,25 +167,26 @@
 
 (defaction xdg-open-dir-action "Open" (dir 10) (action)
   (uiop:launch-program
-   (list "xdg-open" (namestring (get-pathname (context action))))))
+   (list "xdg-open"
+	 (namestring (get-pathname (context action))))))
 
 (defaction copy-dir-action "Copy" (dir 20) (action)
   (set-continue action))
 
-(defmethod display-continue ((action copy-dir-action))
+(defmethod display-continue ((action copy-dir-action) dir)
   (format nil "PASTE: ~a" (display (context action))))
 
-(defmethod perform-continue ((action copy-dir-action) &key dir)
+(defmethod perform-continue ((action copy-dir-action) dir)
   (copy-node (context action) dir)
   (del-continue))
 
 (defaction move-dir-action "Move" (dir 30) (action)
   (set-continue action))
 
-(defmethod display-continue ((action move-dir-action))
+(defmethod display-continue ((action move-dir-action) dir)
   (format nil "PASTE: ~a" (display (context action))))
 
-(defmethod perform-continue ((action move-dir-action) &key dir)
+(defmethod perform-continue ((action move-dir-action) dir)
   (move-node (context action) dir)
   (del-continue))
 
@@ -204,9 +204,10 @@
 	(if (forbidden-pathname-p new-pathname)
 	    (stumpwm::message-no-timeout "Forbidden pathname:~%~a" new-pathname)
             (progn
-	      (uiop:run-program (list "mv"
-				      (namestring old-pathname)
-				      (namestring new-pathname)))
+	      (uiop:run-program
+	       (list "mv"
+		     (namestring old-pathname)
+		     (namestring new-pathname)))
 	      (navigate (parent dir))))))))
 
 (defmethod enabled-p ((action rename-dir-action))
@@ -229,10 +230,10 @@
 (defaction copy-selected-nodes "Copy" (:nodes-selection 10) (action)
   (set-continue action nil))
 
-(defmethod display-continue ((action copy-selected-nodes))
+(defmethod display-continue ((action copy-selected-nodes) dir)
   (format nil "PASTE (~d selected)" (length (selected (context action)))))
 
-(defmethod perform-continue ((action copy-selected-nodes) &key dir)
+(defmethod perform-continue ((action copy-selected-nodes) dir)
   (dolist (node (selected (context action)))
     (copy-node node dir))
   (del-continue))
@@ -240,10 +241,10 @@
 (defaction move-selected-nodes "Move" (:nodes-selection 20) (action)
   (set-continue action nil))
 
-(defmethod display-continue ((action move-selected-nodes))
+(defmethod display-continue ((action move-selected-nodes) dir)
   (format nil "PASTE (~d selected)" (length (selected (context action)))))
 
-(defmethod perform-continue ((action move-selected-nodes) &key dir)
+(defmethod perform-continue ((action move-selected-nodes) dir)
   (setf *debug-value* (list action dir))
   (del-continue))
 
@@ -271,7 +272,9 @@
   (let* ((dir (context action))
 	 (pathname (get-pathname dir)))
     (when-let (name (input-line "~a~%Create directory: " pathname))
-      (uiop:run-program (list "mkdir" (namestring (merge-pathnames name pathname))))
+      (uiop:run-program
+       (list "mkdir"
+	     (namestring (merge-pathnames name pathname))))
       (navigate dir))))
 
 (defaction dir-actions "ACTIONS" () (action)
@@ -288,11 +291,11 @@
 
 (defaction finish-continue nil () (action)
   (let ((dir (context action)))
-    (perform-continue *continue* :dir dir)
+    (perform-continue *continue* dir)
     (navigate dir)))
 
 (defmethod display ((action finish-continue))
-  (display-continue *continue*))
+  (display-continue *continue* (context action)))
 
 (defun dir-menu (dir)
   (if *continue*
