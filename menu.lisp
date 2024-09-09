@@ -51,19 +51,37 @@
     (when-let (selected (cdr (assoc *selection-marker* input)))
       (mapcar #'stumpwm::menu-entry-data selected))))
 
+(defun register-action (class scope position)
+  (when scope (setf (getf *scopes* class) scope))
+  (when position (setf (getf *positions* class) position)))
+
 (defclass action-entry (entry)
   ((context :initarg :context :reader context)))
 
-(defmacro defaction (class display (&optional scope position) (arg) &body body)
-  `(progn
-     (defclass ,class (action-entry)
-       ((display :initform ,display)))
-     ,(when scope
-	`(setf (getf *scopes* ',class) ',scope))
-     ,(when position
-	`(setf (getf *positions* ',class) ',position))
-     (defmethod navigate ((,arg ,class))
-       ,@body)))
+(defmacro defaction (class display
+		     (&optional scope position)
+		     (action-var &optional node-var)
+		     &body body)
+  (let ((continue-on (find (caar body) '(&context &parent))))
+    `(progn
+       (defclass ,class (action-entry)
+	 ((display :initform ,display)))
+       (register-action ',class ',scope ',position)
+       ,(if continue-on
+	    `(defmethod navigate ((action ,class))
+	       (setf *continue* action)
+	       (navigate ,(case continue-on
+			    (&context `(context action))
+			    (&parent `(parent (context action))))))
+	    `(defmethod navigate ((,action-var ,class))
+	       ,@body))
+       ,(when continue-on
+          `(defmethod display-continue ((,action-var ,class) ,node-var)
+	     ,(cadar body)))
+       ,(when continue-on
+	  `(defmethod perform-continue ((,action-var ,class) ,node-var)
+	     ,@(cdr body)
+	     (setf *continue* nil))))))
 
 (defun make-action (class context)
   (make-instance class :context context))
@@ -87,13 +105,6 @@
   (setf *positions* nil)
   (setf *continue* nil)
   (setf *debug-value* nil))
-
-(defun set-continue (action &optional (parent-p t))
-  (setf *continue* action)
-  (navigate (if parent-p (parent (context action)) (context action))))
-
-(defun del-continue ()
-  (setf *continue* nil))
 
 (defaction show-hidden "Show hidden files" () (action)
   (setf *show-hidden-p* t)
@@ -123,25 +134,17 @@
    (list "xdg-open"
 	 (namestring (get-pathname (context action))))))
 
-(defaction copy-file-action "Copy" (file 20) (action)
-  (set-continue action))
+(defaction copy-file-action "Copy" (file 20) (action dir)
+  (&parent (format nil "PASTE: ~a" (display (context action))))
+  (copy-node (context action) dir))
 
-(defmethod display-continue ((action copy-file-action) dir)
-  (format nil "PASTE: ~a" (display (context action))))
+(defaction move-file-action "Move" (file 30) (action dir)
+  (&parent (format nil "PASTE: ~a" (display (context action))))
+  (move-node (context action) dir))
 
-(defmethod perform-continue ((action copy-file-action) dir)
-  (copy-node (context action) dir)
-  (del-continue))
-
-(defaction move-file-action "Move" (file 30) (action)
-  (set-continue action))
-
-(defmethod display-continue ((action move-file-action) dir)
-  (format nil "PASTE: ~a" (display (context action))))
-
-(defmethod perform-continue ((action move-file-action) dir)
-  (move-node (context action) dir)
-  (del-continue))
+(defaction move-file-action "Move" (file 30) (action dir)
+  (&parent (format nil "PASTE: ~a" (display (context action))))
+  (move-node (context action) dir))
 
 (defaction rename-file-action "Rename" (file 40) (action)
   (let* ((file (context action))
@@ -170,25 +173,13 @@
    (list "xdg-open"
 	 (namestring (get-pathname (context action))))))
 
-(defaction copy-dir-action "Copy" (dir 20) (action)
-  (set-continue action))
+(defaction copy-dir-action "Copy" (dir 20) (action dir)
+  (&parent (format nil "PASTE: ~a" (display (context action))))
+  (copy-node (context action) dir))
 
-(defmethod display-continue ((action copy-dir-action) dir)
-  (format nil "PASTE: ~a" (display (context action))))
-
-(defmethod perform-continue ((action copy-dir-action) dir)
-  (copy-node (context action) dir)
-  (del-continue))
-
-(defaction move-dir-action "Move" (dir 30) (action)
-  (set-continue action))
-
-(defmethod display-continue ((action move-dir-action) dir)
-  (format nil "PASTE: ~a" (display (context action))))
-
-(defmethod perform-continue ((action move-dir-action) dir)
-  (move-node (context action) dir)
-  (del-continue))
+(defaction move-dir-action "Move" (dir 30) (action dir)
+  (&parent (format nil "PASTE: ~a" (display (context action))))
+  (move-node (context action) dir))
 
 (defmethod enabled-p ((action move-dir-action))
   (enabled-action-p action))
@@ -227,26 +218,14 @@
 		     (format nil "~d selected" (length nodes)))
        dir))))
 
-(defaction copy-selected-nodes "Copy" (:nodes-selection 10) (action)
-  (set-continue action nil))
-
-(defmethod display-continue ((action copy-selected-nodes) dir)
-  (format nil "PASTE (~d selected)" (length (selected (context action)))))
-
-(defmethod perform-continue ((action copy-selected-nodes) dir)
+(defaction copy-selected-nodes "Copy" (:nodes-selection 10) (action dir)
+  (&context (format nil "PASTE (~d selected)" (length (selected (context action)))))
   (dolist (node (selected (context action)))
-    (copy-node node dir))
-  (del-continue))
+    (copy-node node dir)))
 
-(defaction move-selected-nodes "Move" (:nodes-selection 20) (action)
-  (set-continue action nil))
-
-(defmethod display-continue ((action move-selected-nodes) dir)
-  (format nil "PASTE (~d selected)" (length (selected (context action)))))
-
-(defmethod perform-continue ((action move-selected-nodes) dir)
-  (setf *debug-value* (list action dir))
-  (del-continue))
+(defaction move-selected-nodes "Move" (:nodes-selection 20) (action dir)
+  (&context (format nil "PASTE (~d selected)" (length (selected (context action)))))
+  (setf *debug-value* (list action dir)))
 
 (defaction delete-selected-nodes "Delete" (:nodes-selection 30) (action)
   (setf *debug-value* action))
@@ -286,7 +265,7 @@
 		   (namestring pathname)))))
 
 (defaction cancel-continue "CANCEL" () (action)
-  (del-continue)
+  (setf *continue* nil)
   (navigate (context action)))
 
 (defaction finish-continue nil () (action)
