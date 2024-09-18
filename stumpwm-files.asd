@@ -6,5 +6,4 @@
   :serial t
   :depends-on (#:alexandria #:stumpwm)
   :components ((:file "package")
-               (:file "files")
-	       (:file "menu")))
+               (:file "module")))
