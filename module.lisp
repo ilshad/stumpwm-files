@@ -186,7 +186,7 @@
   (when scope (setf (getf *scopes* class) scope))
   (when position (setf (getf *positions* class) position)))
 
-(defclass action-entry (entry)
+(defclass action (entry)
   ((context :initarg :context :reader context)))
 
 (defmacro defaction (class display
@@ -195,24 +195,22 @@
 		     &body body)
   (let ((continue-on (find (caar body) '(&context &parent))))
     `(progn
-       (defclass ,class (action-entry)
-	 ((display :initform ,display)))
        (register-action ',class ',scope ',position)
-       ,(if continue-on
-	    `(defmethod navigate ((action ,class))
-	       (setf *continue* action)
-	       (navigate ,(case continue-on
-			    (&context `(context action))
-			    (&parent `(parent (context action))))))
-	    `(defmethod navigate ((,action-var ,class))
-	       ,@body))
-       ,(when continue-on
-          `(defmethod display-continue ((,action-var ,class) ,node-var)
-	     ,(cadar body)))
-       ,(when continue-on
-	  `(defmethod perform-continue ((,action-var ,class) ,node-var)
-	     ,@(cdr body)
-	     (setf *continue* nil))))))
+       (defclass ,class (action)
+	 ((display :initform ,display)))
+       ,@(if continue-on
+             `((defmethod navigate ((action ,class))
+		 (setf *continue* action)
+		 (navigate ,(case continue-on
+			      (&context `(context action))
+			      (&parent `(parent (context action))))))
+	       (defmethod display-continue ((,action-var ,class) ,node-var)
+		 ,(cadar body))
+	       (defmethod perform-continue ((,action-var ,class) ,node-var)
+		 ,@(cdr body)
+		 (setf *continue* nil)))
+	     `((defmethod navigate ((,action-var ,class))
+		 ,@body))))))
 
 (defun sorted-actions (context-type &optional direct-only-p)
   (loop for (key value) on *scopes* by #'cddr
@@ -237,20 +235,18 @@
   (setf *continue* nil)
   (setf *debug-value* nil))
 
-(defaction show-hidden "Show hidden files" () (action)
-  (setf *show-hidden-p* t)
-  (navigate (context action)))
+(defaction toggle-hidden nil (settings 10) (action)
+  (setf *show-hidden-p* (not *show-hidden-p*))
+  (navigate (context (context action))))
 
-(defaction hide-hidden "Hide hidden files" () (action)
-  (setf *show-hidden-p* nil)
-  (navigate (context action)))
+(defmethod display ((action toggle-hidden))
+  (format nil "~:[Show~;Hide~] hidden files" *show-hidden-p*))
 
 (defaction settings "SETTINGS" () (action)
   (let ((dir (context action)))
     (navigate
-     (select-entry
-      (list (make-node (get-pathname dir) "<<<")
-	    (make-action (if *show-hidden-p* 'hide-hidden 'show-hidden) dir))
+     (select-entry (cons (make-node (get-pathname dir) "<<<")
+			 (make-actions action))
       "SETTINGS"))))
 
 (defun forbidden-pathname-p (pathname)
