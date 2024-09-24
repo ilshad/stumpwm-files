@@ -214,22 +214,22 @@
 	     ,@(cdr body)
 	     (setf *continue* nil))))))
 
+(defun sorted-actions (context-type &optional direct-only-p)
+  (loop for (key value) on *scopes* by #'cddr
+	when (if direct-only-p
+		 (eq context-type value)
+		 (subtypep context-type value))
+	  collect (cons key (getf *positions* key)) into types
+	finally (return (sort types #'< :key #'(lambda (cons) (or (cdr cons) 999))))))
+
 (defun make-action (class context)
   (make-instance class :context context))
 
-(defun make-actions (context &optional scope)
-  (let ((classes (loop for (key value) on *scopes* by #'cddr
-		       when (if scope
-				(if (keywordp scope)
-				    (eq scope value)
-				    (subtypep scope value))
-				(subtypep (type-of context) value))
-                         collect key)))
-    (flet ((sort-key (class) (or (getf *positions* class) 99)))
-      (loop for class in (sort classes #'< :key #'sort-key)
-	    for action = (make-action class context)
-	    when (enabled-p action)
-            collect action))))
+(defun make-actions (context &optional direct-only-p)
+  (loop for (class . nil) in (sorted-actions (type-of context) direct-only-p)
+	for action = (make-action class context)
+	when (enabled-p action)
+	  collect action))
 
 (defun clean-actions ()
   (setf *scopes* nil)
@@ -334,31 +334,31 @@
       (ensure-directories-exist (make-subdir-pathname name dir))
       (navigate dir))))
 
-(defclass nodes-selection (dir)
+(defclass selected-nodes (dir)
   ((selected :initarg :selected :reader selected)))
 
-(defaction select-nodes "Select files" (dir 50) (action)
+(defaction select-nodes "Select multiple" (dir 50) (action)
   (let ((dir (context action)))
     (navigate
      (if-let (nodes (select-entries (sorted-nodes (get-pathname dir))))
-       (select-entry (make-actions (make-instance 'nodes-selection
-                                                  :pathname (get-pathname dir)
+       (select-entry (make-actions (make-instance 'selected-nodes
+						  :pathname (get-pathname dir)
 						  :selected nodes)
-				   :nodes-selection)
+				   t)
 		     (format nil "~d selected" (length nodes)))
        dir))))
 
-(defaction copy-selected-nodes "Copy" (:nodes-selection 10) (action dir)
+(defaction copy-selected-nodes "Copy" (selected-nodes 10) (action dir)
   (&context (format nil "PASTE (~d selected)" (length (selected (context action)))))
   (dolist (node (selected (context action)))
     (copy-node node dir)))
 
-(defaction move-selected-nodes "Move" (:nodes-selection 20) (action dir)
+(defaction move-selected-nodes "Move" (selected-nodes 20) (action dir)
   (&context (format nil "PASTE (~d selected)" (length (selected (context action)))))
   (dolist (node (selected (context action)))
     (move-node node dir)))
 
-(defaction delete-selected-nodes "Delete" (:nodes-selection 30) (action)
+(defaction delete-selected-nodes "Delete" (selected-nodes 30) (action)
   (let ((nodes (selected (context action)))
 	forbidden)
     (when (yes-p "Delete ~d files? " (length nodes))
