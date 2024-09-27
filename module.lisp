@@ -8,6 +8,7 @@
 (defvar *scopes* nil)
 (defvar *positions* nil)
 (defvar *continue* nil)
+(defvar *pin* nil)
 
 (defclass entry ()
   ((display :initarg :display :initform nil :reader display)))
@@ -135,9 +136,12 @@
 			 (or (forbidden-pathname-p %)
 			     (yes-p "~a~%CONFIRM RECURSIVE DELETION.~%" %))))))))
 
-(defmethod make-subdir-pathname (subdir-name dir-node)
-  (uiop:ensure-directory-pathname
-   (merge-pathnames subdir-name (get-pathname dir-node))))
+(defun make-subdir-pathname (subdir-name dir-node)
+  (uiop:ensure-directory-pathname (merge-pathnames subdir-name (get-pathname dir-node))))
+
+(defun forbidden-pathname-p (pathname)
+  (or (eq pathname (user-homedir-pathname))
+      (>= 3 (length (pathname-directory pathname)))))
 
 (defgeneric navigate (entry))
 (defgeneric enabled-p (action))
@@ -235,7 +239,13 @@
   (setf *continue* nil)
   (setf *debug-value* nil))
 
-(defaction toggle-hidden nil (settings 10) (action)
+(defaction unset-pin "Unset pin" (settings 10) (action)
+  (setf *pin* nil)
+  (navigate (context (context action))))
+
+(defmethod enabled-p ((action unset-pin)) *pin*)
+
+(defaction toggle-hidden nil (settings 20) (action)
   (setf *show-hidden-p* (not *show-hidden-p*))
   (navigate (context (context action))))
 
@@ -248,10 +258,6 @@
      (select-entry (cons (make-node (get-pathname dir) "<<<")
 			 (make-actions action))
       "SETTINGS"))))
-
-(defun forbidden-pathname-p (pathname)
-  (or (eq pathname (user-homedir-pathname))
-      (>= 3 (length (pathname-directory pathname)))))
 
 (defun context-not-forbidden (action)
   (not (forbidden-pathname-p (get-pathname (context action)))))
@@ -287,21 +293,34 @@
       (delete-node file))
     (navigate (parent file))))
 
-(defaction xdg-open-dir-action "Open" (dir 10) (action)
+(defaction pin-dir nil (dir 10) (action)
+  (let* ((dir (context action))
+	 (pathname (get-pathname dir)))
+    (setf *pin* (and (not (eql *pin* pathname)) pathname))
+    (navigate dir)))
+
+(defmethod display ((action pin-dir))
+  (format nil "~:[Pin~;Unpin~]" (eql *pin* (get-pathname (context action)))))
+
+(defmethod enabled-p ((action pin-dir))
+  (not (and (eq (get-pathname (context action)) (user-homedir-pathname))
+	    (not *pin*))))
+
+(defaction xdg-open-dir-action "Open" (dir 20) (action)
   (xdg-open (context action)))
 
-(defaction copy-dir-action "Copy" (dir 20) (action dir)
+(defaction copy-dir-action "Copy" (dir 30) (action dir)
   (&parent (format nil "PASTE: ~a" (display (context action))))
   (copy-node (context action) dir))
 
-(defaction move-dir-action "Move" (dir 30) (action dir)
+(defaction move-dir-action "Move" (dir 40) (action dir)
   (&parent (format nil "PASTE: ~a" (display (context action))))
   (move-node (context action) dir))
 
 (defmethod enabled-p ((action move-dir-action))
   (context-not-forbidden action))
 
-(defaction rename-dir-action "Rename" (dir 40) (action)
+(defaction rename-dir-action "Rename" (dir 50) (action)
   (let ((dir (context action)))
     (when-let (new-name (input-line "Rename directory '~a' to: " (dirname dir)))
       (let ((new-pathname (make-subdir-pathname new-name (parent dir))))
@@ -333,7 +352,7 @@
 (defclass selected-nodes (dir)
   ((selected :initarg :selected :reader selected)))
 
-(defaction select-nodes "Select multiple" (dir 50) (action)
+(defaction select-nodes "Select multiple" (dir 80) (action)
   (let ((dir (context action)))
     (navigate
      (if-let (nodes (select-entries (sorted-nodes (get-pathname dir))))
@@ -414,7 +433,7 @@
 
 (defun menu ()
   (let ((stumpwm::*menu-maximum-height* 30))
-    (navigate (make-node (user-homedir-pathname)))))
+    (navigate (make-node (or *pin* (user-homedir-pathname))))))
 
 (stumpwm:defcommand files () () (menu))
 
