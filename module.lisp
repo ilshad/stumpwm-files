@@ -4,6 +4,7 @@
 (defparameter *hidden-types* '("fasl"))
 (defparameter *selection-marker* #\s)
 (defparameter *debug-value* nil)
+(defparameter *default-opener* 'xdg-open)
 
 (defvar *scopes* nil)
 (defvar *positions* nil)
@@ -143,6 +144,9 @@
   (or (eq pathname (user-homedir-pathname))
       (>= 3 (length (pathname-directory pathname)))))
 
+(defun xdg-open (node)
+  (uiop:launch-program (list "xdg-open" (namestring (get-pathname node)))))
+
 (defgeneric navigate (entry))
 (defgeneric enabled-p (action))
 (defgeneric display-continue (action node))
@@ -262,11 +266,8 @@
 (defun context-not-forbidden (action)
   (not (forbidden-pathname-p (get-pathname (context action)))))
 
-(defun xdg-open (node)
-  (uiop:launch-program (list "xdg-open" (namestring (get-pathname node)))))
-
-(defaction xdg-open-file-action "Open" (file 10) (action)
-  (xdg-open (context action)))
+(defaction open-default "Open" (node 10) (action)
+  (funcall *default-opener* (context action)))
 
 (defaction copy-file-action "Copy" (file 20) (action dir)
   (&parent (format nil "PASTE: ~a" (display (context action))))
@@ -293,7 +294,7 @@
       (delete-node file))
     (navigate (parent file))))
 
-(defaction pin-dir nil (dir 10) (action)
+(defaction pin-dir nil (dir 0) (action)
   (let* ((dir (context action))
 	 (pathname (get-pathname dir)))
     (setf *pin* (and (not (eql *pin* pathname)) pathname))
@@ -305,9 +306,6 @@
 (defmethod enabled-p ((action pin-dir))
   (not (and (eq (get-pathname (context action)) (user-homedir-pathname))
 	    (not *pin*))))
-
-(defaction xdg-open-dir-action "Open" (dir 20) (action)
-  (xdg-open (context action)))
 
 (defaction copy-dir-action "Copy" (dir 30) (action dir)
   (&parent (format nil "PASTE: ~a" (display (context action))))
